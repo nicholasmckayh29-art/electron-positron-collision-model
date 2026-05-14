@@ -1,0 +1,24 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --glow-magenta: 192 132 252;
+    --glow-green: 74 222 128;
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  :where(a, button, input, textarea, select, label[for]):focus-visible {
+    outline: none;
+    /* @apply cannot resolve ring-neon-magenta/70 on nested theme colors (PostCSS error). */
+    box-shadow:
+      0 0 0 2px #000000,
+      0 0 0 4px rgb(var(--glow-magenta) / 0.75);
+  }
+}
