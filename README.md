@@ -6,7 +6,7 @@ FastAPI backend plus a React (Vite) UI for dielectron CMS-style CSVs: statistics
 
 **Hardware-backed prototype of a quantum sampling observable for collider invariant-mass resonance analysis, validated against classical baselines on real IBM Quantum hardware.**
 
-Current IBM Runtime result: a `Z0` mass-window observable was executed on `ibm_marrakesh` with `1024` shots using a `5`-qubit circuit. The hardware estimate was `0.0693 +/- 0.0079`, compared with an exact classical probability of `0.0936` and a binned classical baseline of `0.1019`. This is a NISQ feasibility result and hardware benchmark, not a quantum-advantage claim.
+Current IBM Runtime result: a Z-boson mass-window observable was executed on `ibm_marrakesh` with `1024` shots using a `5`-qubit circuit. The hardware estimate was `0.0693 +/- 0.0079`, compared with an exact classical probability of `0.0936` and a binned classical baseline of `0.1019`. This is a NISQ feasibility result and hardware benchmark, not a quantum-advantage claim.
 
 This benchmark tests how accurately real quantum hardware can sample an encoded collider invariant-mass distribution and estimate the probability of events falling in a known particle resonance window, compared with the classical baseline.
 
