@@ -1,22 +1,34 @@
 import numpy as np
 
-from models.types import Stats
 from services.analysis import identify_particle
-from services.quantum_service import encode_event
+from services.quantum_service import (
+    build_mass_distribution,
+    build_qmc_circuit,
+    estimate_observable_locally,
+    infer_mass_window_observable,
+)
 
 
-def test_encode_event_scaled_to_pi():
-    stats = Stats(
-        z={"E1": {"mean": 0, "std": 1}, "E2": {"mean": 0, "std": 1}, "M": {"mean": 0, "std": 1}},
-        min={"E1": 0.0, "E2": 0.0, "M": 0.0},
-        max={"E1": 200.0, "E2": 200.0, "M": 100.0},
-    )
-    v = encode_event({"E1": 100.0, "E2": 50.0, "M": 25.0}, stats)
-    assert len(v) == 3
-    assert all(0 <= x <= np.pi + 1e-9 for x in v)
-    assert abs(v[0] - np.pi / 2) < 1e-9
-    assert abs(v[1] - np.pi / 4) < 1e-9
-    assert abs(v[2] - np.pi / 4) < 1e-9
+def test_qmc_mass_window_distribution_and_estimate():
+    data = [
+        {"M": 3.09},
+        {"M": 3.10},
+        {"M": 3.20},
+        {"M": 9.46},
+        {"M": 91.2},
+    ]
+    observable = infer_mass_window_observable(data)
+    distribution = build_mass_distribution(data, observable, bins=4)
+    circuit = build_qmc_circuit(distribution["probabilities"])
+    result = estimate_observable_locally(circuit, distribution["good_bins"], shots=512)
+
+    assert observable.name == "jpsi_mass_window"
+    assert distribution["bin_count"] == 4
+    assert np.isclose(float(np.sum(distribution["probabilities"])), 1.0)
+    assert circuit.num_qubits == 2
+    assert 0.0 <= result["estimate"] <= 1.0
+    assert result["shots"] == 512
+    assert distribution["exact_probability"] == 3 / 5
 
 
 def test_identify_z_peak():

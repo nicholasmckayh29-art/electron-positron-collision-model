@@ -6,7 +6,7 @@ This backend is a **data analysis engine** for dielectron collision experiments.
 It takes raw CMS collision data and transforms it into structured insights:
 statistics → outliers → particle matches → spectrum data.
 
-**May 2026:** Session data lives in `services/session_store.py`. Quantum scoring uses **qiskit-aer Estimator** (not IBM Runtime). Light meson windows (η, ρ/ω, φ) are present in `PARTICLE_WINDOWS` again for identification completeness.
+**May 2026:** Session data lives in `services/session_store.py`. Quantum analysis now estimates a QMC-style invariant-mass window observable locally, with IBM Runtime Sampler wiring left as a future backend path. Light meson windows (η, ρ/ω, φ) are present in `PARTICLE_WINDOWS` again for identification completeness.
 
 ---
 
@@ -303,9 +303,9 @@ Add to `routers/data.py`:
 - `GET /api/compare` → Compare two datasets
 
 ### 5. Quantum Layer (Phase 4)
-**Shipped (simulator):** `routers/quantum.py` + `services/quantum_service.py` — encode outlier E1/E2/M, run **Aer** `Estimator` in batches (`QUANTUM_CHUNK_SIZE`), write `quantum_score` on session outliers.
+**Shipped (simulator):** `routers/quantum.py` + `services/quantum_service.py` — infer a resonance mass-window observable, amplitude-encode the binned invariant-mass distribution, locally sample the prepared state, and compare the estimate to exact and binned classical baselines.
 
-**Still open:** IBM Quantum Estimator session + `USE_REAL_BACKEND` toggle.
+**Still open:** IBM Runtime Sampler execution behind the existing `USE_REAL_BACKEND` guardrail.
 
 ---
 
@@ -324,7 +324,7 @@ Add to `routers/data.py`:
 | Removed η, ρ/ω, φ windows | Below data floor (M_min ≈ 2.04 GeV in dielectron.csv) | 2026-04-11 |
 | Υ displayed as "Υ family" | CMS TWiki: electron resolution insufficient to separate Υ(1S/2S/3S) in dielectron channel | 2026-04-11 |
 | CORS allow all (dev) | Easy frontend integration during dev | 2026-04-11 |
-| Aer Estimator quantum scores | Second-pass ⟨ZZZ⟩ on outliers via `qiskit-aer`; chunked jobs | 2026-05-13 |
+| QMC mass-window observable | Replaced placeholder ⟨ZZZ⟩ outlier scores with a simulator-first invariant-mass probability estimate and hardware hook | 2026-05-18 |
 | η / ρ/ω / φ windows re-added | Align with planning doc & low-mass ID when data supports it | 2026-05-13 |
 
 ---
@@ -404,4 +404,4 @@ When the frontend calls the backend, it receives:
 - [x] Particle windows updated to CMS research-backed values
 - [x] `docs/physics/particle-id.md` added with full research basis
 - [x] Frontend initialized (`frontend/`, Vite + React)
-- [x] Quantum integration — **Aer Estimator** (IBM Runtime optional / future)
+- [x] Quantum integration — QMC-style mass-window observable (IBM Runtime optional / future)

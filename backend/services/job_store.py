@@ -18,6 +18,7 @@ class QuantumJobRecord:
     processed: int = 0
     total: int = 0
     scores: dict[str, float] = field(default_factory=dict)  # "run|event" -> score
+    result: dict[str, Any] = field(default_factory=dict)
 
 
 _jobs: dict[str, QuantumJobRecord] = {}
@@ -49,12 +50,16 @@ def update_job(job_id: str, **fields: Any) -> None:
 
 
 def to_public_dict(rec: QuantumJobRecord) -> dict:
-    return {
+    payload = {
         "job_id": rec.job_id,
         "status": rec.status,
         "message": rec.message,
         "error": rec.error,
         "processed": rec.processed,
         "total": rec.total,
-        "scores_applied": rec.status == "completed",
+        "scores_applied": False,
+        "result_ready": rec.status == "completed" and bool(rec.result),
     }
+    if rec.result:
+        payload["result"] = rec.result
+    return payload

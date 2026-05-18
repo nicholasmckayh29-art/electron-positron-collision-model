@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getQuantumResult, submitQuantumJob } from '../api/client'
+import { getQuantumResult, getQuantumRuntimeStatus, submitQuantumJob } from '../api/client'
 
 export default function QuantumJobPanel({ onComplete }) {
   const [jobId, setJobId] = useState(null)
   const [status, setStatus] = useState(null)
+  const [runtime, setRuntime] = useState(null)
   const [err, setErr] = useState(null)
   const [busy, setBusy] = useState(false)
   const timer = useRef(null)
@@ -40,6 +41,12 @@ export default function QuantumJobPanel({ onComplete }) {
 
   useEffect(() => () => clearTimer(), [])
 
+  useEffect(() => {
+    getQuantumRuntimeStatus()
+      .then(setRuntime)
+      .catch(() => setRuntime(null))
+  }, [])
+
   const start = async () => {
     clearTimer()
     setErr(null)
@@ -64,7 +71,8 @@ export default function QuantumJobPanel({ onComplete }) {
         <div>
           <h3 className="font-display text-sm font-semibold text-white">Quantum analysis</h3>
           <p className="text-xs text-zinc-500">
-            Aer Estimator · ⟨ZZZ⟩ per outlier (batched). Re-fetch table when complete.
+            QMC mass-window observable ·{' '}
+            {runtime?.real_backend_enabled ? 'IBM Runtime hardware mode' : 'local simulator mode'}.
           </p>
         </div>
         <button
@@ -89,6 +97,56 @@ export default function QuantumJobPanel({ onComplete }) {
               {status.processed ?? 0} / {status.total}
             </span>
           )}
+          {status.message && <p className="mt-1 text-xs text-zinc-500">{status.message}</p>}
+        </div>
+      )}
+      {runtime && (
+        <p className="mt-2 text-xs text-zinc-500">
+          Runtime:{' '}
+          <span className={runtime.real_backend_enabled ? 'text-cyan-300' : 'text-zinc-300'}>
+            {runtime.real_backend_enabled ? 'IBM enabled' : 'local'}
+          </span>
+          {runtime.requested_backend ? ` · backend ${runtime.requested_backend}` : ''}
+          {runtime.real_backend_enabled && !runtime.token_configured ? ' · token missing' : ''}
+        </p>
+      )}
+      {status?.result && (
+        <div className="mt-3 grid gap-2 rounded-lg border border-amber-400/10 bg-zinc-950/80 p-3 text-xs text-zinc-300 sm:grid-cols-2">
+          <div>
+            <span className="text-zinc-500">Observable</span>
+            <p className="font-medium text-amber-100">{status.result.observable?.label}</p>
+          </div>
+          <div>
+            <span className="text-zinc-500">Backend</span>
+            <p className="font-mono">{status.result.backend}</p>
+          </div>
+          {status.result.runtime_job_id && (
+            <div>
+              <span className="text-zinc-500">IBM job</span>
+              <p className="font-mono">{status.result.runtime_job_id}</p>
+            </div>
+          )}
+          <div>
+            <span className="text-zinc-500">Quantum estimate</span>
+            <p>
+              {status.result.estimate?.toFixed(4)} ±{' '}
+              {status.result.standard_error?.toFixed(4)}
+            </p>
+          </div>
+          <div>
+            <span className="text-zinc-500">Classical baseline</span>
+            <p>{status.result.exact_classical_probability?.toFixed(4)}</p>
+          </div>
+          <div>
+            <span className="text-zinc-500">Shots</span>
+            <p>{status.result.shots}</p>
+          </div>
+          <div>
+            <span className="text-zinc-500">Circuit</span>
+            <p>
+              {status.result.circuit?.qubits} qubits · depth {status.result.circuit?.depth}
+            </p>
+          </div>
         </div>
       )}
       {err && <p className="mt-2 text-sm text-rose-400">{err}</p>}

@@ -33,6 +33,11 @@ export async function submitQuantumJob() {
   return data
 }
 
+export async function getQuantumRuntimeStatus() {
+  const { data } = await api.get('/api/quantum/runtime')
+  return data
+}
+
 export async function getQuantumResult(jobId) {
   const { data } = await api.get(`/api/quantum/result/${jobId}`)
   return data

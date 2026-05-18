@@ -82,8 +82,8 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 - [X] `GET /spectrum` — Return binned mass histogram data
 
 #### Quantum Endpoints
-- [X] `POST /quantum/job` — Submit Estimator job for outlier events
-- [X] `GET /quantum/result/{job_id}` — Poll and return quantum scores
+- [X] `POST /quantum/job` — Submit QMC mass-window observable job
+- [X] `GET /quantum/result/{job_id}` — Poll and return quantum estimate + baseline metadata
 
 ---
 
@@ -99,7 +99,7 @@ backend/
 │   └── quantum.py          # /quantum/* endpoints
 ├── services/
 │   ├── analysis.py         # Core analysis logic + particle ID
-│   ├── quantum_service.py  # Qiskit quantum integration
+│   ├── quantum_service.py  # QMC-style observable estimation
 │   └── job_store.py        # Quantum job tracking
 ├── models/
 │   ├── types.py            # Python dataclasses (Stats, OutlierEvent)

@@ -31,7 +31,7 @@ export default function OutlierTable({
         </label>
       </div>
       <div className="max-h-[420px] overflow-auto">
-        <table className="w-full min-w-[720px] text-left text-sm">
+        <table className="w-full min-w-[640px] text-left text-sm">
           <thead className="sticky top-0 bg-charcoal/98 text-xs uppercase text-zinc-500 backdrop-blur">
             <tr>
               <th className="px-3 py-2">Run</th>
@@ -40,7 +40,6 @@ export default function OutlierTable({
               <th className="px-3 py-2">E2</th>
               <th className="px-3 py-2">M</th>
               <th className="px-3 py-2">Particle</th>
-              <th className="px-3 py-2">⟨ZZZ⟩</th>
             </tr>
           </thead>
           <tbody>
@@ -72,9 +71,6 @@ export default function OutlierTable({
                     >
                       {o.particle?.symbol || '?'}
                     </span>
-                  </td>
-                  <td className="px-3 py-2 font-mono text-xs text-amber-300">
-                    {o.quantum_score != null ? o.quantum_score.toFixed(4) : '—'}
                   </td>
                 </tr>
               )

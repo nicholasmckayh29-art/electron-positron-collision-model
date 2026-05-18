@@ -90,8 +90,8 @@ export default function App() {
             </h1>
             <p className="max-w-2xl text-sm text-zinc-400">
               Upload collision CSV, explore the invariant-mass spectrum with PDG reference lines, inspect
-              statistical outliers, view a schematic 3D particle, then run an Aer Estimator pass for a
-              secondary ⟨ZZZ⟩ score.
+              statistical outliers, view a schematic 3D particle, then run a QMC-style mass-window
+              probability estimate.
             </p>
           </div>
         </header>

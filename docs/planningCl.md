@@ -11,6 +11,12 @@ The experience: a physicist (or curious student) uploads their CMS data, sees th
 spectrum light up with labeled peaks, clicks an outlier event, and watches a 3D particle
 model rotate on screen with decay channel annotations.
 
+
+*** Use QC to generate momentum vectors ?? 
+*** Implement hamiltonians to solve schrodingers equations 
+*** Sample and solve DEs using monet carlos
+
+
 ---
 
 ## Implementation status *(May 2026)*
@@ -21,7 +27,7 @@ model rotate on screen with decay channel annotations.
 | Phase 2 — Backend (FastAPI) | **Done** | Shared `session_store.py`; live routes: `/api/upload`, `/api/stats`, `/api/outliers`, `/api/spectrum` |
 | Phase 3 — Frontend | **Done** | Vite + React + Tailwind + Recharts + R3F; components per plan under `frontend/src/` |
 | 3D viewer | **Done (MVP)** | Schematic scenes in `ParticleViewer3D.jsx` (not separate `particles/*.jsx` modules) |
-| Phase 4 — Quantum | **Partial** | **qiskit-aer `Estimator`**, angle encoding, in-memory jobs, chunked batches; **IBM Quantum Runtime not connected** |
+| Phase 4 — Quantum | **Partial** | QMC mass-window observable runs locally by default; **IBM Quantum Runtime SamplerV2 wired behind `USE_REAL_BACKEND`** |
 | Phase 5 — Polish / deploy | **Partial** | `pytest` + `tests/test_analysis.py`; root + backend README; Docker / prod CORS **TODO** |
 
 **Deviations from this document’s snippets:** ansatz is a fixed **3-parameter RY + CX** circuit (not `RealAmplitudes(3, reps=2)`); API paths use the **`/api`** prefix. There is **no** separate `GET /identify` route (identification runs inside outlier pipeline).
@@ -285,57 +291,35 @@ Each model:
 
 ## Phase 4 — IBM Quantum Integration
 
-**Status:** **Aer Estimator** path implemented (`qiskit_aer.primitives.Estimator`); scores written to `OutlierEvent.quantum_score`. IBM Runtime / `USE_REAL_BACKEND` **not** implemented yet.
+**Status:** QMC-style invariant-mass observable path implemented locally by default. The placeholder **Aer Estimator** / `<ZZZ>` outlier scorer has been replaced. IBM Runtime execution is wired through SamplerV2 when `USE_REAL_BACKEND=true`.
+
+**Hardware validation:** IBM Runtime completed a `Z0` mass-window probability job on `ibm_marrakesh` with `1024` shots. The `5`-qubit circuit estimated `0.0693 +/- 0.0079`, compared with an exact classical probability of `0.0936` and a binned classical baseline of `0.1019`.
+
+**Research claim:** Hardware-backed prototype of a quantum sampling observable for collider invariant-mass resonance analysis, validated against classical baselines on real IBM Quantum hardware.
 
 ### Encoding strategy
 
-Normalize E1, E2, M to angle range [0, π] relative to dataset max:
+Discretize the uploaded event distribution by invariant mass `M`, then prepare amplitudes proportional to the square root of each bin probability:
 
 ```python
-def encode_event(event: dict, stats: Stats) -> list[float]:
-    return [
-        (event["E1"] / stats.max["E1"]) * np.pi,
-        (event["E2"] / stats.max["E2"]) * np.pi,
-        (event["M"]  / stats.max["M"])  * np.pi,
-    ]
+probabilities = histogram_counts / total_events
+qc.initialize(np.sqrt(probabilities), range(num_qubits))
 ```
 
-Feed as parameters to a 3-qubit `RealAmplitudes` circuit. Use `Estimator` to compute
-`<ZZZ>` expectation value — events far from the bulk will have a distinct expectation
-value, giving a continuous quantum anomaly score per event.
+The first observable estimates the probability that an uploaded event lies inside the most populated known resonance mass window. The result is reported with an exact classical baseline, a binned baseline, shot count, uncertainty, circuit width/depth, and backend metadata. This is a hardware-shaped QMC/QAE stepping stone, not a claim of speedup yet.
 
 ### Backend quantum service
 
 ```python
-from qiskit_ibm_runtime import QiskitRuntimeService, Estimator, Session
-from qiskit.circuit.library import RealAmplitudes
-from qiskit.quantum_info import SparsePauliOp
-
-OBSERVABLE = SparsePauliOp("ZZZ")
-ANSATZ     = RealAmplitudes(num_qubits=3, reps=2)
-
-def submit_outlier_job(encoded_events: list[list[float]]) -> str:
-    service = QiskitRuntimeService()
-    backend = service.least_busy(operational=True, simulator=False)
-    with Session(service=service, backend=backend) as session:
-        estimator = Estimator(session=session)
-        job = estimator.run(
-            circuits=[ANSATZ] * len(encoded_events),
-            observables=[OBSERVABLE] * len(encoded_events),
-            parameter_values=encoded_events
-        )
-        return job.job_id()
+observable = infer_mass_window_observable(session_data)
+distribution = build_mass_distribution(session_data, observable)
+circuit = build_qmc_circuit(distribution["probabilities"])
+result = estimate_observable_locally(circuit, distribution["good_bins"], shots)
 ```
 
 ### Local dev fallback
 
-```python
-from qiskit_aer import AerSimulator
-from qiskit_ibm_runtime.fake_provider import FakeSherbrooke
-backend = AerSimulator.from_backend(FakeSherbrooke())
-```
-
-Toggle via env var: `USE_REAL_BACKEND=true`
+Local development uses Qiskit `Statevector` sampling. Setting `USE_REAL_BACKEND=true` submits the measured QMC circuit to IBM Runtime SamplerV2, so keep `QMC_SHOTS` low while testing limited runtime.
 
 ---
 
@@ -445,9 +429,9 @@ axios
 | 4 | Outlier table | Particle badges, clickable rows, pagination | Done |
 | 5 | 3D viewer (Z boson) | Z⁰ scene on row click | Done |
 | 6 | All particle models | 7 resonances + unknown (schematic, one component) | Done (MVP) |
-| 7 | Quantum integration (sim) | Aer Estimator job, scores in table | Done |
-| 8 | Quantum integration (real) | IBM Quantum Runtime | **Not started** |
-| 9 | Full E2E | Upload → spectrum → outlier → 3D → quantum score | Done (sim) |
+| 7 | Quantum integration (sim) | QMC mass-window observable estimate in panel | Done |
+| 8 | Quantum integration (real) | IBM Quantum Runtime Sampler | Done |
+| 9 | Full E2E | Upload → spectrum → outlier → 3D → QMC observable | Done (sim + hardware run) |
 
 ---
 

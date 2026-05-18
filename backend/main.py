@@ -1,8 +1,15 @@
+from pathlib import Path
+
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers.data import router as data_router
-from routers.quantum import router as quantum_router
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR.parent / ".env")
+load_dotenv(BASE_DIR / ".env")
+
+from routers.data import router as data_router  # noqa: E402
+from routers.quantum import router as quantum_router  # noqa: E402
 
 app = FastAPI(
     title="Quantum Particle Collision Visualizer",
