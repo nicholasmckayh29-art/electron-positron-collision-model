@@ -148,15 +148,6 @@ cd backend && source .venv/bin/activate
 python ../scripts/run_verification_calibration.py --csv /path/to/dielectron.csv --particles jpsi,z_boson
 ```
 
-### IBM Quantum Runtime
-
-Local simulation is still the default. To spend real IBM Quantum runtime:
-
-1. Copy `.env.example` to `.env` at the repo root.
-2. Set `IBM_QUANTUM_TOKEN` (or `IBM_API_KEY`) from the [IBM Quantum Platform](https://quantum.ibm.com/) account page.
-3. Optionally set `IBM_QUANTUM_INSTANCE` (instance CRN) and `IBM_BACKEND`.
-4. Set `USE_REAL_BACKEND=true`. Keep `QMC_SHOTS` low while testing, for example `1024`.
-
 Verify connectivity without submitting a job:
 
 ```bash
@@ -164,8 +155,6 @@ curl "http://127.0.0.1:8000/api/quantum/runtime?probe=true"
 ```
 
 Or open `GET /api/quantum/runtime?probe=true` in the API docs after starting the backend.
-
-**Token source:** use the API token from [IBM Quantum Platform -> Account](https://quantum.ibm.com/account), not other service keys. IBM tokens are typically long alphanumeric strings (no `ApiKey-` prefix). If probe returns "API key could not be found", regenerate the token on the IBM site and update `.env`.
 
 ### Local Quantum Databank (hardware runs)
 
