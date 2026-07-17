@@ -1,7 +1,7 @@
 import numpy as np
-import csv
 
 from models.types import Stats, OutlierEvent
+from services.collision_data import load_collision_csv, load_collision_csv_from_text
 
 FIELDS_TO_CHECK = ['E1', 'E2', 'M']
 
@@ -72,42 +72,20 @@ PARTICLE_WINDOWS = [
 ]
 
 
-def load_csv_data(filepath: str) -> list[dict]:
-    """Load dielectron collision data from CSV file.
-    
-    Args:
-        filepath: Path to CSV file with columns: Run, Event, E1, E2, M
-        
-    Returns:
-        List of records with numeric values converted to float.
-        Rows with missing/invalid values are skipped.
+def load_csv_from_text(text: str) -> list[dict]:
+    """Load dielectron collision data from CSV text.
+
+    Supports CMS wide tables (E1/E2/M), Zee-style pt/eta/phi tables, and
+    long per-electron exports paired by Run/Event.
     """
-    data_set = []
-    
-    with open(filepath, 'r') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            record = {}
-            skip_row = False
-            
-            for key, value in row.items():
-                clean_key = key.strip()
-                try:
-                    float_val = float(value)
-                    if np.isnan(float_val):
-                        skip_row = True
-                        break
-                    record[clean_key] = float_val
-                except ValueError:
-                    if value.strip() == '':
-                        skip_row = True
-                        break
-                    record[clean_key] = value
-            
-            if not skip_row:
-                data_set.append(record)
-    
-    return data_set
+    _, records = load_collision_csv_from_text(text)
+    return records
+
+
+def load_csv_data(filepath: str) -> list[dict]:
+    """Load dielectron collision data from a CSV file path."""
+    _, records = load_collision_csv(filepath)
+    return records
 
 
 def summarize_stats(data_set: list[dict]) -> Stats:

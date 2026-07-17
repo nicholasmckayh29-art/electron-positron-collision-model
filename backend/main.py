@@ -14,7 +14,7 @@ from routers.quantum import router as quantum_router  # noqa: E402
 app = FastAPI(
     title="Quantum Particle Collision Visualizer",
     description="Upload dielectron collision data, identify outliers, match to particles, run quantum analysis",
-    version="0.1.0"
+    version="1.1.0"
 )
 
 # CORS - allow frontend to call backend

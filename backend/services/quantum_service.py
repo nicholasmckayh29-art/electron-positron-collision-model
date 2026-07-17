@@ -1,332 +1,132 @@
-"""Quantum Monte Carlo-style observable estimation for collision datasets.
+"""Facade for quantum sampling & verification (backward-compatible imports).
 
-The implementation prepares a small amplitude-encoded distribution over
-invariant-mass bins and estimates the probability of a selected resonance
-window. It runs locally by default and can submit the same measured circuit to
-IBM Quantum Runtime when ``USE_REAL_BACKEND=true`` is configured.
+Implementation lives under ``services.quantum`` — modular encoders, symmetry hooks,
+and snapshot vs evolution pipelines. See docs/implementation_directives.md.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import os
-from dataclasses import dataclass
 
 import numpy as np
 from qiskit import QuantumCircuit
-from qiskit.quantum_info import Statevector
 
 from services import job_store, session_store
-from services.analysis import PARTICLE_WINDOWS
+from services.quantum.distribution import DEFAULT_BINS
+from services.quantum.encoding import BinaryQubitEncoder
+from services.quantum.estimation import estimate_observable_locally, estimate_observable_on_ibm
+from services.quantum.databank import append_hardware_run, databank_enabled
+from services.quantum.observables import infer_mass_window_observable
+from services.quantum.pipeline import (
+    AdaptiveSnapshotVerificationPipeline,
+    SnapshotVerificationPipeline,
+)
+from services.quantum.runtime_config import DEFAULT_SHOTS, get_runtime_status, real_backend_enabled
+from services.quantum.types import QMCObservable
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SHOTS = int(os.environ.get("QMC_SHOTS", "4096"))
-DEFAULT_BINS = int(os.environ.get("QMC_MASS_BINS", "32"))
-RNG_SEED = int(os.environ.get("QMC_RNG_SEED", "2026"))
-TRUE_VALUES = {"1", "true", "yes", "on"}
-
-
-@dataclass(frozen=True)
-class QMCObservable:
-    """Mass-window probability observable for a discretized event distribution."""
-
-    name: str
-    label: str
-    mass_center: float
-    low: float
-    high: float
+_default_encoder = BinaryQubitEncoder()
 
 
 def _next_power_of_two(value: int) -> int:
-    return 1 << max(1, int(value - 1).bit_length())
+    from services.quantum.distribution import next_power_of_two
+
+    return next_power_of_two(value)
 
 
-def infer_mass_window_observable(data_set: list[dict]) -> QMCObservable:
-    """Choose the resonance window with the most matching uploaded events."""
+def build_mass_distribution(data_set, observable, bins=DEFAULT_BINS):
+    from services.quantum.distribution import build_mass_distribution as _build
 
-    masses = np.array([float(row["M"]) for row in data_set if "M" in row], dtype=float)
-    if masses.size == 0:
-        raise ValueError("Uploaded data has no invariant mass column M.")
-
-    best_particle = None
-    best_count = -1
-    for particle in PARTICLE_WINDOWS:
-        low = float(particle["mass"]) - float(particle["width"])
-        high = float(particle["mass"]) + float(particle["width"])
-        count = int(np.count_nonzero((masses >= low) & (masses <= high)))
-        if count > best_count:
-            best_particle = particle
-            best_count = count
-
-    if best_particle and best_count > 0:
-        mass = float(best_particle["mass"])
-        width = float(best_particle["width"])
-        return QMCObservable(
-            name=f"{best_particle['name']}_mass_window",
-            label=f"{best_particle['symbol']} mass-window probability",
-            mass_center=mass,
-            low=mass - width,
-            high=mass + width,
-        )
-
-    mean = float(np.mean(masses))
-    std = float(np.std(masses))
-    half_width = std if std > 0 else max(abs(mean) * 0.05, 1.0)
-    return QMCObservable(
-        name="central_mass_window",
-        label="Central mass-window probability",
-        mass_center=mean,
-        low=mean - half_width,
-        high=mean + half_width,
-    )
-
-
-def build_mass_distribution(
-    data_set: list[dict], observable: QMCObservable, bins: int = DEFAULT_BINS
-) -> dict:
-    """Discretize invariant mass values and mark bins overlapping the observable."""
-
-    masses = np.array([float(row["M"]) for row in data_set if "M" in row], dtype=float)
-    if masses.size == 0:
-        raise ValueError("Uploaded data has no invariant mass values.")
-
-    bin_count = _next_power_of_two(max(2, bins))
-    counts, edges = np.histogram(masses, bins=bin_count)
-    probabilities = counts.astype(float) / float(masses.size)
-    bin_lows = edges[:-1]
-    bin_highs = edges[1:]
-    good_bins = np.where((bin_highs >= observable.low) & (bin_lows <= observable.high))[0]
-    exact_good = (masses >= observable.low) & (masses <= observable.high)
-
-    return {
-        "masses": masses,
-        "counts": counts,
-        "edges": edges,
-        "probabilities": probabilities,
-        "good_bins": good_bins,
-        "exact_probability": float(np.count_nonzero(exact_good) / masses.size),
-        "binned_probability": float(np.sum(probabilities[good_bins])),
-        "bin_count": bin_count,
-    }
+    dist = _build(data_set, observable, bins)
+    return dist.as_dict()
 
 
 def build_qmc_circuit(probabilities: np.ndarray) -> QuantumCircuit:
-    """Prepare sqrt(probability) amplitudes over mass bins."""
-
-    probabilities = np.asarray(probabilities, dtype=float)
-    if probabilities.ndim != 1 or probabilities.size == 0:
-        raise ValueError("probabilities must be a non-empty 1D array.")
-    if not np.isclose(float(np.sum(probabilities)), 1.0):
-        raise ValueError("probabilities must sum to one.")
-
-    num_qubits = int(np.log2(probabilities.size))
-    if 2**num_qubits != probabilities.size:
-        raise ValueError("probability vector length must be a power of two.")
-
-    qc = QuantumCircuit(num_qubits, name="qmc_mass_distribution")
-    qc.initialize(np.sqrt(probabilities), range(num_qubits))
-    return qc
+    return _default_encoder.build_preparation_circuit(probabilities)
 
 
-def estimate_observable_locally(
-    circuit: QuantumCircuit, good_bins: np.ndarray, shots: int = DEFAULT_SHOTS
+def _build_hardware_run_record(
+    *,
+    job_id: str,
+    mode: str,
+    particle_name: str | None,
+    target_probability: float | None,
+    mass_bins: int | None,
+    max_iterations: int | None,
+    epsilon: float | None,
+    max_shots: int | None,
+    max_bins: int | None,
+    allow_backend_switch: bool | None,
+    allow_symmetry_toggle: bool | None,
+    result_payload: dict,
 ) -> dict:
-    """Sample a prepared quantum distribution with a deterministic local simulator."""
-
-    state = Statevector.from_instruction(circuit)
-    probabilities = np.asarray(state.probabilities(), dtype=float)
-    good = np.asarray(good_bins, dtype=int)
-    if good.size == 0:
-        good_probability = 0.0
-    else:
-        good_probability = float(np.sum(probabilities[good]))
-
-    rng = np.random.default_rng(RNG_SEED)
-    sampled_good = int(rng.binomial(shots, good_probability))
-    estimate = sampled_good / float(shots)
-    stderr = float(np.sqrt(max(estimate * (1.0 - estimate), 0.0) / shots))
-
+    observable = result_payload.get("observable", {})
+    verification = result_payload.get("verification", {})
+    circuit = result_payload.get("circuit", {})
+    encoding = result_payload.get("encoding", {})
+    convergence = result_payload.get("convergence", {})
     return {
-        "estimate": float(estimate),
-        "good_counts": sampled_good,
-        "shots": shots,
-        "standard_error": stderr,
-        "statevector_probability": good_probability,
+        "record_type": "quantum_hardware_run",
+        "record_version": 1,
+        "saved_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "job_id": job_id,
+        "mode": mode,
+        "particle": particle_name or "auto",
+        "control_config": {
+            "target_probability": target_probability,
+            "mass_bins": mass_bins,
+            "max_iterations": max_iterations,
+            "epsilon": epsilon,
+            "max_shots": max_shots,
+            "max_bins": max_bins,
+            "allow_backend_switch": allow_backend_switch,
+            "allow_symmetry_toggle": allow_symmetry_toggle,
+        },
+        "backend": result_payload.get("backend"),
+        "runtime_job_id": result_payload.get("runtime_job_id"),
+        "shots": result_payload.get("shots"),
+        "estimate": result_payload.get("estimate"),
+        "standard_error": result_payload.get("standard_error"),
+        "good_counts": result_payload.get("good_counts"),
+        "observable": observable,
+        "ground_truth": {
+            "exact_classical_probability": result_payload.get("exact_classical_probability"),
+            "binned_classical_probability": result_payload.get("binned_classical_probability"),
+            "discretization": result_payload.get("discretization"),
+        },
+        "verification": verification,
+        "convergence": convergence,
+        "iterations": result_payload.get("iterations", []),
+        "circuit": {
+            "qubits": circuit.get("qubits"),
+            "depth": circuit.get("depth"),
+            "ops": circuit.get("ops"),
+            "bins": circuit.get("bins"),
+            "distinct_bins_observed": circuit.get("distinct_bins_observed"),
+            "top_histogram": circuit.get("top_histogram", []),
+        },
+        "encoding": encoding,
+        "notes": result_payload.get("notes"),
     }
 
 
-def real_backend_enabled() -> bool:
-    """Return whether quantum jobs should submit to IBM Runtime."""
-
-    return os.environ.get("USE_REAL_BACKEND", "").lower() in TRUE_VALUES
-
-
-def get_runtime_status() -> dict:
-    """Report local IBM Runtime configuration without submitting any jobs."""
-
-    try:
-        import qiskit_ibm_runtime  # noqa: F401
-
-        runtime_installed = True
-    except ImportError:
-        runtime_installed = False
-
-    return {
-        "real_backend_enabled": real_backend_enabled(),
-        "runtime_installed": runtime_installed,
-        "token_configured": bool(
-            os.environ.get("IBM_QUANTUM_TOKEN") or os.environ.get("IBM_API_KEY")
-        ),
-        "instance_configured": bool(os.environ.get("IBM_QUANTUM_INSTANCE")),
-        "channel": os.environ.get("IBM_QUANTUM_CHANNEL", "ibm_quantum_platform"),
-        "requested_backend": os.environ.get("IBM_BACKEND") or None,
-        "shots": DEFAULT_SHOTS,
-        "mass_bins": DEFAULT_BINS,
-    }
-
-
-def _backend_name(backend) -> str:
-    name = getattr(backend, "name", None)
-    return name() if callable(name) else str(name)
-
-
-def _backend_num_qubits(backend) -> int:
-    value = getattr(backend, "num_qubits", None)
-    if value is not None:
-        return int(value)
-    configuration = getattr(backend, "configuration", None)
-    if callable(configuration):
-        return int(configuration().num_qubits)
-    return 0
-
-
-def _backend_pending_jobs(backend) -> int:
-    status = getattr(backend, "status", None)
-    if not callable(status):
-        return 999_999
-    try:
-        return int(getattr(status(), "pending_jobs", 999_999))
-    except Exception:
-        return 999_999
-
-
-def _select_ibm_backend(service, min_qubits: int):
-    requested_backend = os.environ.get("IBM_BACKEND")
-    if requested_backend:
-        return service.backend(requested_backend)
-
-    try:
-        candidates = service.backends(
-            simulator=False,
-            operational=True,
-            min_num_qubits=min_qubits,
-        )
-    except TypeError:
-        candidates = []
-        for backend in service.backends():
-            if getattr(backend, "simulator", False):
-                continue
-            if _backend_num_qubits(backend) >= min_qubits:
-                candidates.append(backend)
-
-    if not candidates:
-        raise RuntimeError(f"No operational IBM backends with >= {min_qubits} qubits.")
-
-    return min(
-        candidates,
-        key=lambda backend: (_backend_pending_jobs(backend), _backend_num_qubits(backend)),
-    )
-
-
-def _sampler_counts(result) -> dict[str, int]:
-    """Extract counts from Runtime SamplerV2 results across minor API variants."""
-
-    pub_result = result[0]
-    data = getattr(pub_result, "data", None)
-    if data is not None:
-        for register_name in ("meas", "c", "cr", "creg"):
-            register = getattr(data, register_name, None)
-            if register is not None and hasattr(register, "get_counts"):
-                return register.get_counts()
-        if hasattr(data, "items"):
-            for _, register in data.items():
-                if hasattr(register, "get_counts"):
-                    return register.get_counts()
-
-    quasi_dists = getattr(result, "quasi_dists", None)
-    if quasi_dists:
-        return {format(int(k), "b"): int(round(v)) for k, v in quasi_dists[0].items()}
-
-    raise RuntimeError(
-        "Could not read measurement counts from IBM Runtime Sampler result."
-    )
-
-
-def estimate_observable_on_ibm(
-    circuit: QuantumCircuit, good_bins: np.ndarray, shots: int = DEFAULT_SHOTS
-) -> dict:
-    """Submit the measured QMC circuit to IBM Runtime SamplerV2."""
-
-    try:
-        from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
-        from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2 as Sampler
-    except ImportError as exc:
-        raise RuntimeError(
-            "qiskit-ibm-runtime is required for USE_REAL_BACKEND=true. "
-            "Run pip install -r backend/requirements.txt."
-        ) from exc
-
-    service_kwargs = {
-        "channel": os.environ.get("IBM_QUANTUM_CHANNEL", "ibm_quantum_platform"),
-    }
-    token = os.environ.get("IBM_QUANTUM_TOKEN") or os.environ.get("IBM_API_KEY")
-    instance = os.environ.get("IBM_QUANTUM_INSTANCE")
-    if token:
-        service_kwargs["token"] = token
-    if instance:
-        service_kwargs["instance"] = instance
-
-    service = QiskitRuntimeService(**service_kwargs)
-    measured_circuit = circuit.measure_all(inplace=False)
-    backend = _select_ibm_backend(service, measured_circuit.num_qubits)
-    pass_manager = generate_preset_pass_manager(backend=backend, optimization_level=1)
-    isa_circuit = pass_manager.run(measured_circuit)
-
-    sampler = Sampler(mode=backend)
-    runtime_job = sampler.run([isa_circuit], shots=shots)
-    counts = _sampler_counts(runtime_job.result())
-
-    good = {int(bin_index) for bin_index in np.asarray(good_bins, dtype=int)}
-    good_counts = 0
-    total_counts = 0
-    for bitstring, count in counts.items():
-        normalized = str(bitstring).replace(" ", "")
-        bin_index = int(normalized, 2)
-        total_counts += int(count)
-        if bin_index in good:
-            good_counts += int(count)
-
-    if total_counts == 0:
-        raise RuntimeError("IBM Runtime Sampler returned zero measurement counts.")
-
-    estimate = good_counts / float(total_counts)
-    stderr = float(np.sqrt(max(estimate * (1.0 - estimate), 0.0) / total_counts))
-
-    return {
-        "estimate": float(estimate),
-        "good_counts": good_counts,
-        "shots": total_counts,
-        "standard_error": stderr,
-        "backend": _backend_name(backend),
-        "runtime_job_id": runtime_job.job_id(),
-        "transpiled_depth": isa_circuit.depth(),
-        "transpiled_ops": dict(isa_circuit.count_ops()),
-    }
-
-
-def run_quantum_job(job_id: str) -> None:
-    """Background worker: estimate a QMC mass-window observable."""
+def run_quantum_job(
+    job_id: str,
+    particle_name: str | None = None,
+    mode: str = "snapshot",
+    target_probability: float | None = None,
+    mass_bins: int | None = None,
+    max_iterations: int | None = None,
+    epsilon: float | None = None,
+    max_shots: int | None = None,
+    max_bins: int | None = None,
+    allow_backend_switch: bool | None = None,
+    allow_symmetry_toggle: bool | None = None,
+) -> None:
+    """Background worker: snapshot verification sampling job."""
 
     rec = job_store.get_job(job_id)
     if not rec:
@@ -343,84 +143,125 @@ def run_quantum_job(job_id: str) -> None:
 
     shots = DEFAULT_SHOTS
     processed = 0
+    particle_label = particle_name or "auto"
+    mode_label = (mode or "snapshot").strip().lower()
 
     try:
         job_store.update_job(
             job_id,
             status="running",
-            message="Preparing QMC mass-window observable.",
+            message=(
+                f"Preparing {mode_label} verification for resonance '{particle_label}'."
+            ),
             total=shots,
         )
 
-        observable = infer_mass_window_observable(data_set)
-        distribution = build_mass_distribution(data_set, observable, DEFAULT_BINS)
-        circuit = build_qmc_circuit(distribution["probabilities"])
+        if mode_label == "adaptive_snapshot":
+            pipeline = AdaptiveSnapshotVerificationPipeline()
+        else:
+            pipeline = SnapshotVerificationPipeline()
 
-        if real_backend_enabled():
+        def ibm_status(status: str) -> None:
             job_store.update_job(
                 job_id,
                 status="running",
-                message="Submitting QMC circuit to IBM Quantum Runtime.",
+                message=f"IBM Runtime: {status}",
                 total=shots,
             )
-            estimate = estimate_observable_on_ibm(circuit, distribution["good_bins"], shots)
-            backend_name = estimate["backend"]
-            hardware_ready = True
-            runtime_job_id = estimate["runtime_job_id"]
-        else:
-            estimate = estimate_observable_locally(circuit, distribution["good_bins"], shots)
-            backend_name = "local_statevector_sampler"
-            hardware_ready = False
-            runtime_job_id = None
-        processed = shots
 
-        decomposed = circuit.decompose(reps=5)
-        result = {
-            "method": "qmc_mass_window_probability",
-            "backend": backend_name,
-            "hardware_ready": hardware_ready,
-            "runtime_job_id": runtime_job_id,
-            "observable": {
-                "name": observable.name,
-                "label": observable.label,
-                "mass_center": observable.mass_center,
-                "low": observable.low,
-                "high": observable.high,
-            },
-            "estimate": estimate["estimate"],
-            "standard_error": estimate["standard_error"],
-            "good_counts": estimate["good_counts"],
-            "shots": estimate["shots"],
-            "exact_classical_probability": distribution["exact_probability"],
-            "binned_classical_probability": distribution["binned_probability"],
-            "statevector_probability": estimate.get("statevector_probability"),
-            "discretization": {
-                "mass_bins": distribution["bin_count"],
-                "good_bins": distribution["good_bins"].astype(int).tolist(),
-                "mass_min": float(distribution["edges"][0]),
-                "mass_max": float(distribution["edges"][-1]),
-            },
-            "circuit": {
-                "qubits": circuit.num_qubits,
-                "depth": estimate.get("transpiled_depth", decomposed.depth()),
-                "ops": estimate.get("transpiled_ops", dict(decomposed.count_ops())),
-            },
-            "notes": (
-                "Prototype QMC/QAE-style observable estimation. This sampling job "
-                "does not yet claim quadratic speedup or Hamiltonian replay."
-            ),
-        }
+        if real_backend_enabled():
+            from services.quantum.ibm_client import probe_ibm_runtime
+
+            probe = probe_ibm_runtime()
+            if not probe.get("ok"):
+                hint = probe.get("hint", "")
+                raise RuntimeError(
+                    f"IBM Runtime not ready: {probe.get('error', 'unknown')}. {hint}".strip()
+                )
+            job_store.update_job(
+                job_id,
+                status="running",
+                message="Connecting to IBM Quantum Runtime…",
+                total=shots,
+            )
+
+        if mode_label == "adaptive_snapshot":
+            policy_env = {}
+            if max_shots is not None:
+                policy_env["QMC_POLICY_MAX_SHOTS"] = str(int(max_shots))
+            if max_bins is not None:
+                policy_env["QMC_POLICY_MAX_BINS"] = str(int(max_bins))
+            if allow_backend_switch is not None:
+                policy_env["QMC_POLICY_ALLOW_BACKEND_SWITCH"] = (
+                    "true" if allow_backend_switch else "false"
+                )
+            if allow_symmetry_toggle is not None:
+                policy_env["QMC_POLICY_ALLOW_SYMMETRY_TOGGLE"] = (
+                    "true" if allow_symmetry_toggle else "false"
+                )
+            previous = {k: os.environ.get(k) for k in policy_env}
+            os.environ.update(policy_env)
+            result = pipeline.run(
+                data_set,
+                shots=shots,
+                bins=mass_bins,
+                particle_name=particle_name,
+                target_probability=target_probability,
+                max_iterations=max_iterations or 20,
+                epsilon=epsilon if epsilon is not None else 0.00001,
+                status_callback=ibm_status if real_backend_enabled() else None,
+            )
+            for k, old in previous.items():
+                if old is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = old
+            processed = int(sum(step.get("shots", 0) for step in result.iterations))
+        else:
+            result = pipeline.run(
+                data_set,
+                shots=shots,
+                bins=mass_bins,
+                particle_name=particle_name,
+                status_callback=ibm_status if real_backend_enabled() else None,
+            )
+            processed = shots
 
         job_store.update_job(
             job_id,
             status="completed",
-            message="QMC observable estimation complete.",
+            message=f"Quantum {mode_label} verification complete.",
             processed=processed,
-            total=shots,
-            result=result,
+            total=max(shots, processed),
+            result=result.to_job_payload(),
         )
-    except Exception as exc:  # pragma: no cover - hardware / qiskit failures
-        logger.exception("QMC quantum job failed")
+        rec = job_store.get_job(job_id)
+        result_payload = rec.result if rec else result.to_job_payload()
+        if (
+            result_payload.get("hardware_ready")
+            and result_payload.get("runtime_job_id")
+            and databank_enabled()
+        ):
+            record = _build_hardware_run_record(
+                job_id=job_id,
+                mode=mode_label,
+                particle_name=particle_name,
+                target_probability=target_probability,
+                mass_bins=mass_bins,
+                max_iterations=max_iterations,
+                epsilon=epsilon,
+                max_shots=max_shots,
+                max_bins=max_bins,
+                allow_backend_switch=allow_backend_switch,
+                allow_symmetry_toggle=allow_symmetry_toggle,
+                result_payload=result_payload,
+            )
+            db_path = append_hardware_run(record)
+            result_payload["databank_recorded"] = True
+            result_payload["databank_path"] = db_path
+            job_store.update_job(job_id, result=result_payload)
+    except Exception as exc:  # pragma: no cover
+        logger.exception("Quantum sampling verification job failed")
         job_store.update_job(
             job_id,
             status="failed",
@@ -428,3 +269,18 @@ def run_quantum_job(job_id: str) -> None:
             processed=processed,
             total=shots,
         )
+
+
+__all__ = [
+    "DEFAULT_BINS",
+    "DEFAULT_SHOTS",
+    "QMCObservable",
+    "build_mass_distribution",
+    "build_qmc_circuit",
+    "estimate_observable_locally",
+    "estimate_observable_on_ibm",
+    "get_runtime_status",
+    "infer_mass_window_observable",
+    "real_backend_enabled",
+    "run_quantum_job",
+]

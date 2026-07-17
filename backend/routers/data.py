@@ -1,10 +1,9 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException # type: ignore
-import os
-import sys
+from pathlib import PurePath
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from fastapi import APIRouter, UploadFile, File, HTTPException  # type: ignore
 
-from services.analysis import load_csv_data, summarize_stats, find_outliers
+from services.analysis import summarize_stats, find_outliers
+from services.collision_data import CollisionDataError, describe_dataset_format, load_collision_csv_from_text
 from services import session_store
 from models.schemas import UploadResponse, StatsResponse, SpectrumResponse
 
@@ -14,22 +13,21 @@ router = APIRouter()
 @router.post("/upload", response_model=UploadResponse)
 async def upload_csv(file: UploadFile = File(...)):
     """Upload a dielectron collision CSV file for analysis."""
-    if not file.filename.endswith('.csv'):
+    if not file.filename or PurePath(file.filename).suffix.lower() != '.csv':
         raise HTTPException(status_code=400, detail="File must be a CSV")
-    
-    # Save uploaded file temporarily
-    temp_path = f"temp_{file.filename}"
-    with open(temp_path, "wb") as f:
-        content = await file.read()
-        f.write(content)
-    
+
+    content = await file.read()
     try:
-        session_store.session_data = load_csv_data(temp_path)
+        text = content.decode('utf-8')
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded text")
+
+    try:
+        dataset_format, session_store.session_data = load_collision_csv_from_text(text)
+    except CollisionDataError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {str(e)}")
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
     
     if len(session_store.session_data) == 0:
         raise HTTPException(status_code=400, detail="No valid data rows found in CSV")
@@ -45,7 +43,10 @@ async def upload_csv(file: UploadFile = File(...)):
     return UploadResponse(
         rows=len(session_store.session_data),
         columns=columns,
-        message=f"Successfully loaded {len(session_store.session_data)} events"
+        message=(
+            f"Successfully loaded {len(session_store.session_data)} events "
+            f"({describe_dataset_format(dataset_format)})"
+        ),
     )
 
 

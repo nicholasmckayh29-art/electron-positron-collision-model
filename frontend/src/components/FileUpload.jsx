@@ -42,8 +42,10 @@ export default function FileUpload({ onUploaded, disabled }) {
         handle(e.dataTransfer.files[0])
       }}
     >
-      <p className="font-display text-lg font-semibold text-white">Upload dielectron CSV</p>
-      <p className="mt-2 text-sm text-zinc-400">Drag & drop or choose file (Run, Event, E1, E2, M)</p>
+      <p className="font-display text-lg font-semibold text-white">Upload collision CSV</p>
+      <p className="mt-2 text-sm text-zinc-400">
+        CMS dielectron formats: wide (E1, E2, M), Zee-style (pt/eta/phi), or long per-electron rows
+      </p>
       <label className="mt-6 inline-block cursor-pointer rounded-xl bg-neon-magenta px-5 py-2.5 text-sm font-semibold text-black hover:bg-neon-magenta/90">
         {busy ? 'Loading…' : 'Choose CSV'}
         <input

@@ -29,6 +29,8 @@ htmlcov/
 
 # Build / local data (add project-specific large CSVs if needed)
 *.log
+mlruns/
+outputs/
 
 # Node (frontend)
 node_modules/

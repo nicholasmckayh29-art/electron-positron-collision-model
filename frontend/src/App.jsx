@@ -90,8 +90,8 @@ export default function App() {
             </h1>
             <p className="max-w-2xl text-sm text-zinc-400">
               Upload collision CSV, explore the invariant-mass spectrum with PDG reference lines, inspect
-              statistical outliers, view a schematic 3D particle, then run a QMC-style mass-window
-              probability estimate.
+              statistical outliers, view a schematic 3D particle, then run adaptive or snapshot quantum
+              verification on IBM hardware with automatic databank logging.
             </p>
           </div>
         </header>
@@ -133,6 +133,7 @@ export default function App() {
               </section>
 
               <QuantumJobPanel
+                ready={ready}
                 onComplete={() => {
                   loadOutliers(offset, knownOnly)
                   loadOverlay(knownOnly)

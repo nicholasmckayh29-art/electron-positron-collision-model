@@ -43,3 +43,44 @@ class SpectrumResponse(BaseModel):
     edges: List[float]
     counts: List[int]
     particles: List[Dict[str, Any]]
+
+
+class QuantumJobRequest(BaseModel):
+    """Optional parameters for a verification sampling job."""
+
+    particle: Optional[str] = None  # auto | jpsi | z_boson | …
+    mode: Optional[str] = "snapshot"  # snapshot | adaptive_snapshot
+    target_probability: Optional[float] = None
+    mass_bins: Optional[int] = None
+    max_iterations: Optional[int] = None
+    epsilon: Optional[float] = None
+    max_shots: Optional[int] = None
+    max_bins: Optional[int] = None
+    allow_backend_switch: Optional[bool] = None
+    allow_symmetry_toggle: Optional[bool] = None
+
+
+class QuantumObservableOption(BaseModel):
+    id: str
+    label: str
+    mass_center: Optional[float] = None
+    low: Optional[float] = None
+    high: Optional[float] = None
+    symbol: Optional[str] = None
+    decay: Optional[str] = None
+
+
+class QuantumObservablesResponse(BaseModel):
+    observables: List[QuantumObservableOption]
+
+
+class ClassicalGroundTruthResponse(BaseModel):
+    observable: Dict[str, Any]
+    exact_classical_probability: float
+    binned_classical_probability: float
+    discretization_error: float
+    discretization_error_abs: float
+    bin_count: int
+    mass_range: List[float]
+    good_bins: List[int]
+    event_count: int
