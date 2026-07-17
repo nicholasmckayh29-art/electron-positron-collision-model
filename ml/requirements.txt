@@ -1,0 +1,6 @@
+pandas>=2.2,<3
+scikit-learn>=1.6,<2
+joblib>=1.5,<2
+mlflow>=3,<4
+azure-ai-ml>=1.28,<2
+azure-identity>=1.23,<2
