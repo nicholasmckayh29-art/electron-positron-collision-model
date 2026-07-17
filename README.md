@@ -1,6 +1,6 @@
 # Quantum Particle Collision Visualizer
 
-**Version 1.1.0** · May 2026
+**Version 1.2.0** · July 2026
 
 FastAPI backend plus a React (Vite) UI for dielectron CMS-style CSVs: statistics, invariant-mass spectrum, outlier detection, particle ID by mass windows, and a **Quantum Monte Carlo-style mass-window observable** prototype. The quantum path runs locally by default and can submit the same observable to IBM Quantum Runtime.
 
